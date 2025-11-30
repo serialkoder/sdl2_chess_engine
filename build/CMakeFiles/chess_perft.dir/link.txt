@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/chess_perft.dir/src/perft.cpp.o CMakeFiles/chess_perft.dir/src/board.cpp.o CMakeFiles/chess_perft.dir/src/move.cpp.o CMakeFiles/chess_perft.dir/src/search.cpp.o CMakeFiles/chess_perft.dir/src/eval.cpp.o -o chess_perft

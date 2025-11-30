@@ -1,0 +1,56 @@
+# Core Rules for This Repo (Home Profile)
+
+- Treat this repo like an existing, mature codebase.
+- Before writing code for any task, you MUST:
+  1. Read `AI-coding-style.md`.
+  2. If `memory-bank/` exists, read the relevant docs.
+  3. Search the repo for similar functionality and copy the patterns.
+
+- Prefer existing patterns over new architectures.
+- Do not invent new public APIs/DB fields unless explicitly asked.
+
+## Dev commands, builds, and tests
+
+- Different repos and packages are built differently.
+- You MUST treat dev commands as data in this repo, not something to guess.
+
+When you need to build, test, lint, or run anything:
+
+1. Identify the relevant repo/package:
+   - Use the current working directory and nearby config files
+     (`package.json`, `pyproject.toml`, `pom.xml`, `go.mod`, etc.).
+   - If it’s still unclear, ask the user which package/folder we’re working in.
+
+2. Look for dev-command docs in this order:
+   - `memory-bank/01-dev-commands.md`
+   - `DEV_COMMANDS.md` at the repo root (if it exists)
+
+3. If `memory-bank/01-dev-commands.md` exists:
+   - Open it.
+   - Find the section that matches the current repo/package.
+   - Use those commands exactly for build / test / lint / run.
+
+4. If it does NOT exist yet:
+   - Derive commands from the repo’s README and config files
+     (`package.json`, `Makefile`, `pyproject.toml`, CI configs, etc.).
+   - Use those commands for this session.
+   - Suggest creating or updating `memory-bank/01-dev-commands.md`
+     so future sessions don’t have to rediscover them.
+
+### Command discovery and upgrades
+
+- Sometimes you will discover new flags, env vars, or commands that are actually required or clearly better:
+  - e.g. `pnpm test --runInBand`, `pnpm test:ci`, additional env vars, etc.
+
+When that happens:
+
+1. Explain to the user what you found and why it matters.
+2. Propose the updated command, e.g.
+   - “Current: `pnpm test` → Proposed: `pnpm test --runInBand` because CI docs say parallel runs are flaky.”
+3. Only after the user agrees:
+   - Update `memory-bank/01-dev-commands.md` so the new behavior becomes the canonical default for that repo/package.
+4. For one-off experiments (debugging flaky tests, etc.):
+   - Say explicitly that it’s an experiment.
+   - Do **not** update `01-dev-commands.md` unless we decide to adopt it as the new default.
+
+- Do NOT silently drift away from what is documented in `memory-bank/01-dev-commands.md`.

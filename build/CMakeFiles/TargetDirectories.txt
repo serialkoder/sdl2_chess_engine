@@ -1,0 +1,4 @@
+/Users/serialcoder/Projects/sdl2_chess_engine/build/CMakeFiles/chess.dir
+/Users/serialcoder/Projects/sdl2_chess_engine/build/CMakeFiles/chess_perft.dir
+/Users/serialcoder/Projects/sdl2_chess_engine/build/CMakeFiles/edit_cache.dir
+/Users/serialcoder/Projects/sdl2_chess_engine/build/CMakeFiles/rebuild_cache.dir
