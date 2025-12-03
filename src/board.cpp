@@ -528,9 +528,49 @@ void Board::undo_move()
     zobristKey_ = undo.zobristKey;
 }
 
+void Board::make_null_move()
+{
+    Undo undo;
+    undo.state = state_;
+    undo.zobristKey = zobristKey_;
+    undo.capturedPiece = Piece::None;
+    undo.move = Move{};
+    history_.push_back(undo);
+
+    if (state_.sideToMove == Color::Black)
+    {
+        ++state_.fullmoveNumber;
+    }
+
+    ++state_.halfmoveClock;
+    state_.enPassantSquare = -1;
+    state_.sideToMove = opposite_color(state_.sideToMove);
+
+    zobristKey_ = compute_zobrist();
+}
+
+void Board::undo_null_move()
+{
+    if (history_.empty())
+    {
+        return;
+    }
+
+    const Undo undo = history_.back();
+    history_.pop_back();
+
+    state_ = undo.state;
+    zobristKey_ = undo.zobristKey;
+}
+
 Color Board::side_to_move() const noexcept
 {
     return state_.sideToMove;
+}
+
+int Board::fullmove_number() const noexcept
+{
+    return state_.fullmoveNumber;
 }
 
 Piece Board::piece_at(int square) const noexcept

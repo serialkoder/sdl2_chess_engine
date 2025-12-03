@@ -255,8 +255,8 @@ namespace ui
                                         int score = 0;
                                         std::int64_t nodes = 0;
                                         int depth = 0;
-                                        const int engineDepth = 4;
-                                        const int engineTimeMs = 2000;
+                                        const int engineDepth = 6;
+                                        const int engineTimeMs = 3000;
 
                                         const Move engineMove =
                                             find_best_move(board, engineDepth, engineTimeMs, score, nodes, depth);
@@ -351,4 +351,3 @@ namespace ui
         SDL_Quit();
     }
 }
-

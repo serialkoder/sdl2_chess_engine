@@ -66,8 +66,11 @@ public:
 
     void make_move(const Move& move);
     void undo_move();
+    void make_null_move();
+    void undo_null_move();
 
     [[nodiscard]] Color side_to_move() const noexcept;
+    [[nodiscard]] int fullmove_number() const noexcept;
     [[nodiscard]] Piece piece_at(int square) const noexcept;
     void set_piece_at(int square, Piece piece);
 
