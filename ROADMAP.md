@@ -4,75 +4,36 @@ This document captures planned improvements and next steps for the C++17 chess e
 
 ## 1. Search Improvements
 
-- **Deeper / smarter search**
-  - Increase default engine depth (e.g. 5–6) and rely more on `timeLimitMs` for time control.
-  - Add check extensions so forcing sequences with checks are searched more deeply.
-  - Consider selective extensions for passed pawn pushes or immediate recaptures.
+- **Deeper / smarter search** — Implemented: iterative deepening with default depth raised (UI uses depth 6 with time budget), check/passed/recapture extensions; still room to tune depth/time defaults.
 
-- **Move ordering**
-  - Implement MVV–LVA ordering for captures (most valuable victim / least valuable attacker).
-  - Add a small killer-move table and history heuristic to prioritize moves that caused cutoffs.
-  - Order moves roughly: TT best move → captures (MVV–LVA) → promotions → killer moves → other quiet moves.
+- **Move ordering** — Implemented: TT best move, MVV–LVA captures, promotions priority, killer table, history heuristic.
 
-- **Pruning / reductions (later)**
-  - Add null-move pruning with a depth reduction to quickly detect obvious cutoffs.
-  - Add late-move reductions (LMR) for low-priority moves late in the move list at deeper nodes.
+- **Pruning / reductions** — Implemented: null-move pruning and late-move reductions for low-priority quiets.
 
 ## 2. Evaluation Improvements
 
-- **King safety**
-  - Penalize a king with weak pawn cover and open/semi-open files nearby.
-  - Encourage castling in the opening/middlegame; penalize an uncastled king after some move threshold.
-  - Add bonuses/penalties for enemy pieces near the king.
+- **King safety** — Implemented: pawn shield/open-file penalties, castling incentive/un-castled penalty after move threshold, nearby enemy piece pressure.
 
-- **Pawn structure**
-  - Detect and score:
-    - Passed pawns (with bonuses that grow as they advance).
-    - Isolated and doubled pawns (penalties).
-    - Backward pawns on open or semi-open files.
+- **Pawn structure** — Implemented: passed pawn scaling by rank, isolated, doubled, and backward pawn penalties.
 
-- **Piece activity**
-  - Bonuses for:
-    - Developed minor pieces.
-    - Rooks on open or semi-open files.
-    - Knights in the centre; mild penalties for edge/corner knights.
-  - Penalize trapped or clearly misplaced pieces.
+- **Piece activity** — Implemented: developed/central minors, rooks on open/semi-open/7th, edge knight penalties, mild queen activity bonuses.
 
-- **Game phase and scaling**
-  - Track material to estimate phase (opening → endgame).
-  - Blend between different king piece–square tables for middlegame vs endgame.
+- **Game phase and scaling** — Implemented: material-based phase with blended midgame/endgame king tables and scores.
 
 ## 3. Transposition Table & Time Management
 
-- **TT refinement**
-  - Replace the `std::unordered_map` TT with a fixed-size table indexed by `zobrist_key % TTSize`.
-  - Store key, depth, score, node type, and best move per entry.
-  - Normalize mate scores (distance-to-mate) so they remain consistent across depths.
+- **TT refinement** — Implemented: fixed-size TT keyed by `zobrist_key % TTSize`, stores depth/node type/best move, normalized mate scores.
 
-- **Time management**
-  - Implement simple time allocation across moves instead of a fixed per-move `engineTimeMs`.
-  - Use iterative deepening and stop search gracefully as time expires, keeping the best completed iteration.
+- **Time management** — Implemented: simple per-move budget helper feeding iterative deepening; search stops on time while keeping last completed iteration.
 
 ## 4. GUI / UX Enhancements
 
-- **UI features**
-  - Display side-to-move, score, depth, and NPS in a status area or side panel.
-  - Show move list (simple algebraic or PGN-style) and last-move highlighting for both sides.
-  - Add a “new game” control and optionally a “flip board” option.
+- **UI features** — Pending: status area (side, score, depth, NPS), move list + last-move highlight, “new game” control, optional “flip board”.
 
-- **Input / usability**
-  - Highlight the last move made.
-  - Optional: show legal move hints when hovering over a piece.
-  - Expose engine settings (search depth, time limit) via keyboard shortcuts or a simple menu.
+- **Input / usability** — Pending: last-move highlight, optional legal-move hints, engine settings via shortcuts/menu.
 
 ## 5. Testing & Tooling
 
-- **Perft and regression**
-  - Keep using `chess_perft` to validate move generation after any changes to movegen or make/undo.
-  - Add more standard test positions (e.g. Kiwipete) with known perft results.
+- **Perft and regression** — Pending: expand standard perft positions (e.g. Kiwipete) to validate movegen after changes.
 
-- **Engine diagnostics**
-  - Add a CLI mode to:
-    - Search a given FEN at fixed depth.
-    - Print score and principal variation for debugging evaluation and search behaviour.
-
+- **Engine diagnostics** — Pending: CLI mode to search a given FEN at fixed depth and print score/PV for eval/search debugging.
