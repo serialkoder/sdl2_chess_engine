@@ -12,5 +12,5 @@ Move find_best_move(Board& board,
                     int timeLimitMs,
                     int& outScore,
                     std::int64_t& outNodes,
-                    int& outDepth);
-
+                    int& outDepth,
+                    bool useAbsoluteTime = false);

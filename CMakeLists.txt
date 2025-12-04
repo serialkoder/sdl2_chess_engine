@@ -21,9 +21,11 @@ set(SRC_FILES
     src/ui.cpp
     src/history.cpp
     src/notation.cpp
+    src/uci.cpp
 )
 
 add_executable(chess ${SRC_FILES})
+set_target_properties(chess PROPERTIES OUTPUT_NAME engine)
 
 add_executable(chess_perft
     src/perft.cpp

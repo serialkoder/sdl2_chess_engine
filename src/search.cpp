@@ -615,7 +615,8 @@ Move find_best_move(Board& board,
                     int timeLimitMs,
                     int& outScore,
                     std::int64_t& outNodes,
-                    int& outDepth)
+                    int& outDepth,
+                    bool useAbsoluteTime)
 {
     transpositionTable.fill(TTEntry{});
     killerMoves.fill(KillerMoves{});
@@ -630,7 +631,8 @@ Move find_best_move(Board& board,
 
     SearchContext context;
     context.startTime = std::chrono::steady_clock::now();
-    context.timeLimitMs = compute_time_budget_ms(timeLimitMs);
+    const int clampedTime = (timeLimitMs > 0) ? timeLimitMs : 0;
+    context.timeLimitMs = useAbsoluteTime ? clampedTime : compute_time_budget_ms(clampedTime);
     context.stopped = false;
 
     std::int64_t nodes = 0;
