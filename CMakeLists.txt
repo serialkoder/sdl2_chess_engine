@@ -19,6 +19,7 @@ set(SRC_FILES
     src/search.cpp
     src/eval.cpp
     src/ui.cpp
+    src/history.cpp
 )
 
 add_executable(chess ${SRC_FILES})
