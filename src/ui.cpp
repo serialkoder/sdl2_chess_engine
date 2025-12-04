@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
+#include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -14,6 +17,7 @@
 #include "board.h"
 #include "history.h"
 #include "move.h"
+#include "notation.h"
 #include "search.h"
 
 namespace ui
@@ -32,6 +36,7 @@ namespace ui
         constexpr int HistoryControlsHeight = 80;
         constexpr int TextScale = 2;
         constexpr std::uint32_t AutoPlayIntervalMs = 250;
+        constexpr std::uint32_t StatusDurationMs = 2000;
         constexpr int DefaultEngineDepth = 6;
         constexpr int DefaultEngineTimeMs = 3000;
 
@@ -74,11 +79,16 @@ namespace ui
             std::vector<GameMeta> games;
             int selectedIndex{0};
             int scrollOffset{0};
+            int moveListScroll{0};
             GameRecord loaded{};
             bool loadedValid{false};
             int ply{0};
+            std::vector<std::string> sanMoves;
+            bool showSan{true};
             bool autoplay{false};
             std::uint32_t lastAutoTick{0};
+            std::string statusText;
+            std::uint32_t statusExpireMs{0};
             Board replayBoard;
         };
 
@@ -404,6 +414,47 @@ namespace ui
             historyState.loadedValid = true;
             historyState.autoplay = false;
             historyState.ply = 0;
+            historyState.statusText.clear();
+            historyState.statusExpireMs = 0;
+            historyState.showSan = true;
+            historyState.moveListScroll = 0;
+
+            historyState.sanMoves.clear();
+            if (!historyState.loaded.moves.empty())
+            {
+                Board tmp;
+                tmp.load_fen(
+                    historyState.loaded.startFen.empty() ? StartingFen : historyState.loaded.startFen);
+
+                historyState.sanMoves.reserve(historyState.loaded.moves.size());
+                for (const std::string& uci : historyState.loaded.moves)
+                {
+                    const std::vector<Move> legal = tmp.generate_legal_moves();
+                    Move matched{};
+                    bool found = false;
+                    for (const Move& m : legal)
+                    {
+                        if (m.to_uci() == uci)
+                        {
+                            matched = m;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (found)
+                    {
+                        historyState.sanMoves.push_back(move_to_san(tmp, matched));
+                        tmp.make_move(matched);
+                    }
+                    else
+                    {
+                        historyState.sanMoves.push_back(uci);
+                        apply_uci_move(tmp, uci);
+                    }
+                }
+            }
+
             rebuild_replay_position(historyState, 0);
         }
 
@@ -411,6 +462,7 @@ namespace ui
         {
             historyState.games = history::list_games();
             historyState.scrollOffset = 0;
+            historyState.moveListScroll = 0;
             historyState.autoplay = false;
             historyState.ply = 0;
 
@@ -445,6 +497,130 @@ namespace ui
             {
                 historyState.scrollOffset = maxScroll;
             }
+        }
+
+        void clamp_move_scroll(HistoryUIState& historyState, int listHeight)
+        {
+            const int movesRows = (total_plies(historyState) + 1) / 2;
+            const int contentHeight = movesRows * ListRowHeight;
+            const int maxScroll = std::max(0, contentHeight - listHeight);
+            if (historyState.moveListScroll < 0)
+            {
+                historyState.moveListScroll = 0;
+            }
+            else if (historyState.moveListScroll > maxScroll)
+            {
+                historyState.moveListScroll = maxScroll;
+            }
+        }
+
+        std::string sanitize_filename(const std::string& name)
+        {
+            std::string out = name;
+            for (char& c : out)
+            {
+                if (c == ':' || c == ' ' || c == '/')
+                {
+                    c = '-';
+                }
+            }
+            return out;
+        }
+
+        std::filesystem::path export_dir()
+        {
+            std::filesystem::path dir;
+            char* rawPath = SDL_GetPrefPath("serialcoder", "sdl2_chess_engine");
+            if (rawPath)
+            {
+                dir = std::filesystem::path(rawPath) / "exports";
+                SDL_free(rawPath);
+            }
+            else
+            {
+                dir = std::filesystem::temp_directory_path() / "sdl2_chess_engine" / "exports";
+            }
+
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            if (ec)
+            {
+                std::cerr << "Failed to create export directory " << dir << ": " << ec.message() << '\n';
+            }
+            return dir;
+        }
+
+        std::string pgn_date_from_utc(const std::string& utc)
+        {
+            if (utc.size() >= 10 &&
+                std::isdigit(static_cast<unsigned char>(utc[0])) &&
+                std::isdigit(static_cast<unsigned char>(utc[1])) &&
+                std::isdigit(static_cast<unsigned char>(utc[2])) &&
+                std::isdigit(static_cast<unsigned char>(utc[3])) &&
+                utc[4] == '-' &&
+                std::isdigit(static_cast<unsigned char>(utc[5])) &&
+                std::isdigit(static_cast<unsigned char>(utc[6])) &&
+                utc[7] == '-' &&
+                std::isdigit(static_cast<unsigned char>(utc[8])) &&
+                std::isdigit(static_cast<unsigned char>(utc[9])))
+            {
+                return utc.substr(0, 4) + "." + utc.substr(5, 2) + "." + utc.substr(8, 2);
+            }
+            return "????.??.??";
+        }
+
+        void set_status(HistoryUIState& historyState, const std::string& text)
+        {
+            historyState.statusText = text;
+            historyState.statusExpireMs = SDL_GetTicks() + StatusDurationMs;
+        }
+
+        std::string build_pgn(const HistoryUIState& historyState)
+        {
+            if (!historyState.loadedValid)
+            {
+                return {};
+            }
+
+            const std::string result = historyState.loaded.result.empty() ? "*" : historyState.loaded.result;
+            const std::string date = pgn_date_from_utc(historyState.loaded.utc);
+
+            std::string pgn;
+            pgn += "[Event \"SDL2 Chess\"]\n";
+            pgn += "[Site \"Local\"]\n";
+            pgn += "[Date \"" + date + "\"]\n";
+            pgn += "[Round \"-\"]\n";
+            pgn += "[White \"User\"]\n";
+            pgn += "[Black \"Engine\"]\n";
+            pgn += "[Result \"" + result + "\"]\n";
+
+            if (historyState.loaded.startFen != StartingFen)
+            {
+                pgn += "[SetUp \"1\"]\n";
+                pgn += "[FEN \"" + historyState.loaded.startFen + "\"]\n";
+            }
+
+            pgn += "\n";
+
+            const std::vector<std::string>& sanList =
+                !historyState.sanMoves.empty() ? historyState.sanMoves : historyState.loaded.moves;
+
+            const int total = static_cast<int>(sanList.size());
+            for (int i = 0; i < total; i += 2)
+            {
+                const int moveNumber = i / 2 + 1;
+                pgn += std::to_string(moveNumber) + ". ";
+                pgn += sanList[static_cast<std::size_t>(i)];
+                if (i + 1 < total)
+                {
+                    pgn += " ";
+                    pgn += sanList[static_cast<std::size_t>(i + 1)];
+                }
+                pgn += " ";
+            }
+
+            pgn += result;
+            return pgn;
         }
 
         void draw_panel_background(SDL_Renderer* renderer)
@@ -579,14 +755,29 @@ namespace ui
 
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-        const int panelInnerX = BoardPixels + PanelPadding;
-        const int panelInnerW = PanelWidth - 2 * PanelPadding;
-        const int historyListY = PanelPadding + ButtonHeight + ButtonSpacing;
-        const int historyListHeight = WindowHeight - historyListY - HistoryControlsHeight - ButtonSpacing;
-        const SDL_Rect historyListRect{panelInnerX, historyListY, panelInnerW, historyListHeight};
-
         while (running)
         {
+            const int panelInnerX = BoardPixels + PanelPadding;
+            const int panelInnerW = PanelWidth - 2 * PanelPadding;
+            const int historyListY = PanelPadding + ButtonHeight + ButtonSpacing;
+
+            const int exportButtonsHeight = ButtonHeight;
+            const int totalRem = WindowHeight - historyListY -
+                                 ButtonSpacing - ButtonHeight - ButtonSpacing -
+                                 exportButtonsHeight - ButtonSpacing - HistoryControlsHeight;
+            const int gameListHeight = totalRem / 2;
+            const int moveListHeight = totalRem - gameListHeight;
+
+            const SDL_Rect historyListRect{panelInnerX, historyListY, panelInnerW, gameListHeight};
+            const int moveHeaderY = historyListY + gameListHeight + ButtonSpacing;
+            const SDL_Rect moveHeaderRect{panelInnerX, moveHeaderY, panelInnerW, ButtonHeight};
+            const SDL_Rect moveListRect{
+                panelInnerX,
+                moveHeaderY + ButtonHeight + ButtonSpacing,
+                panelInnerW,
+                moveListHeight};
+            const int exportButtonsY = moveListRect.y + moveListRect.h + ButtonSpacing;
+
             SDL_Event event;
             while (SDL_PollEvent(&event))
             {
@@ -603,8 +794,16 @@ namespace ui
                 {
                     if (mode == UIMode::History)
                     {
-                        historyState.scrollOffset -= event.wheel.y * ListRowHeight;
-                        clamp_scroll(historyState, historyListRect.h);
+                        if (hit_test(historyListRect, mouseX, mouseY))
+                        {
+                            historyState.scrollOffset -= event.wheel.y * ListRowHeight;
+                            clamp_scroll(historyState, historyListRect.h);
+                        }
+                        else if (hit_test(moveListRect, mouseX, mouseY))
+                        {
+                            historyState.moveListScroll -= event.wheel.y * ListRowHeight;
+                            clamp_move_scroll(historyState, moveListRect.h);
+                        }
                     }
                 }
                 else if (event.type == SDL_KEYDOWN)
@@ -809,50 +1008,153 @@ namespace ui
                                 rowIndex < static_cast<int>(historyState.games.size()))
                             {
                                 load_history_entry(historyState, rowIndex);
+                                clamp_move_scroll(historyState, moveListRect.h);
+                            }
+                        }
+                        else if (hit_test(moveHeaderRect, clickX, clickY))
+                        {
+                            const int toggleWidth = ButtonHeight;
+                            SDL_Rect toggleRect{moveHeaderRect.x + moveHeaderRect.w - toggleWidth,
+                                                moveHeaderRect.y,
+                                                toggleWidth,
+                                                ButtonHeight};
+                            if (hit_test(toggleRect, clickX, clickY))
+                            {
+                                historyState.showSan = !historyState.showSan;
+                                set_status(historyState, historyState.showSan ? "Showing SAN" : "Showing UCI");
+                            }
+                        }
+                        else if (hit_test(moveListRect, clickX, clickY) && historyState.loadedValid)
+                        {
+                            const int rowY = clickY - moveListRect.y + historyState.moveListScroll;
+                            const int rowIndex = rowY / ListRowHeight;
+                            const int totalRows = (total_plies(historyState) + 1) / 2;
+                            if (rowIndex >= 0 && rowIndex < totalRows)
+                            {
+                                const int basePly = rowIndex * 2;
+                                const bool hasBlack = basePly + 1 < total_plies(historyState);
+
+                                int targetPly = basePly;
+
+                                if (hasBlack)
+                                {
+                                    const int labelWidth =
+                                        measure_text_width(std::to_string(rowIndex + 1) + ".", TextScale) +
+                                        TextScale * 2;
+                                    const int whiteWidth =
+                                        measure_text_width(
+                                            historyState.showSan
+                                                ? historyState.sanMoves[static_cast<std::size_t>(basePly)]
+                                                : historyState.loaded.moves[static_cast<std::size_t>(basePly)],
+                                            TextScale);
+                                    const int whiteEnd = moveListRect.x + 8 + labelWidth + whiteWidth;
+                                    if (clickX >= whiteEnd + 4)
+                                    {
+                                        targetPly = basePly + 1;
+                                    }
+                                }
+
+                                rebuild_replay_position(historyState, targetPly + 1);
+                                historyState.autoplay = false;
                             }
                         }
                         else
                         {
-                            const int controlAreaY = WindowHeight - HistoryControlsHeight + PanelPadding;
-                            const int buttonsY = controlAreaY + 7 * TextScale + 10;
-                            const int controlWidth = panelInnerW;
-                            const int buttonWidth = (controlWidth - ButtonSpacing * 4) / 5;
-
-                            const SDL_Rect firstBtn{panelInnerX, buttonsY, buttonWidth, ButtonHeight};
-                            const SDL_Rect prevBtn{panelInnerX + (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
-                            const SDL_Rect playBtn{panelInnerX + 2 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
-                            const SDL_Rect nextBtn{panelInnerX + 3 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
-                            const SDL_Rect lastBtn{panelInnerX + 4 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
+                            const int exportWidth = (panelInnerW - ButtonSpacing * 2) / 3;
+                            const SDL_Rect exportPgnBtn{
+                                panelInnerX,
+                                exportButtonsY,
+                                exportWidth,
+                                ButtonHeight};
+                            const SDL_Rect copyPgnBtn{
+                                panelInnerX + exportWidth + ButtonSpacing,
+                                exportButtonsY,
+                                exportWidth,
+                                ButtonHeight};
+                            const SDL_Rect copyFenBtn{
+                                panelInnerX + 2 * (exportWidth + ButtonSpacing),
+                                exportButtonsY,
+                                exportWidth,
+                                ButtonHeight};
 
                             const bool hasGame = historyState.loadedValid;
-                            const int total = total_plies(historyState);
 
-                            if (hasGame && hit_test(firstBtn, clickX, clickY))
+                            if (hasGame && hit_test(exportPgnBtn, clickX, clickY))
                             {
-                                historyState.autoplay = false;
-                                rebuild_replay_position(historyState, 0);
+                                const std::string pgn = build_pgn(historyState);
+                                const std::filesystem::path dir = export_dir();
+                                const std::string utcSafe = sanitize_filename(historyState.loaded.utc.empty()
+                                                                                    ? "unknown"
+                                                                                    : historyState.loaded.utc);
+                                const std::filesystem::path path = dir / ("game_" + utcSafe + ".pgn");
+                                std::ofstream out(path);
+                                if (out)
+                                {
+                                    out << pgn;
+                                    set_status(historyState, "Saved " + path.filename().string());
+                                }
+                                else
+                                {
+                                    set_status(historyState, "Failed to save PGN");
+                                }
                             }
-                            else if (hasGame && hit_test(prevBtn, clickX, clickY))
+                            else if (hasGame && hit_test(copyPgnBtn, clickX, clickY))
                             {
-                                historyState.autoplay = false;
-                                const int target = std::max(0, historyState.ply - 1);
-                                rebuild_replay_position(historyState, target);
+                                const std::string pgn = build_pgn(historyState);
+                                if (!pgn.empty())
+                                {
+                                    SDL_SetClipboardText(pgn.c_str());
+                                    set_status(historyState, "Copied PGN");
+                                }
                             }
-                            else if (hasGame && hit_test(playBtn, clickX, clickY))
+                            else if (hasGame && hit_test(copyFenBtn, clickX, clickY))
                             {
-                                historyState.autoplay = !historyState.autoplay;
-                                historyState.lastAutoTick = SDL_GetTicks();
+                                const std::string fen = historyState.replayBoard.to_fen();
+                                SDL_SetClipboardText(fen.c_str());
+                                set_status(historyState, "Copied FEN");
                             }
-                            else if (hasGame && hit_test(nextBtn, clickX, clickY))
+                            else
                             {
-                                historyState.autoplay = false;
-                                const int target = std::min(total, historyState.ply + 1);
-                                rebuild_replay_position(historyState, target);
-                            }
-                            else if (hasGame && hit_test(lastBtn, clickX, clickY))
-                            {
-                                historyState.autoplay = false;
-                                rebuild_replay_position(historyState, total);
+                                const int controlAreaY = WindowHeight - HistoryControlsHeight + PanelPadding;
+                                const int buttonsY = controlAreaY + 7 * TextScale + 10;
+                                const int controlWidth = panelInnerW;
+                                const int buttonWidth = (controlWidth - ButtonSpacing * 4) / 5;
+
+                                const SDL_Rect firstBtn{panelInnerX, buttonsY, buttonWidth, ButtonHeight};
+                                const SDL_Rect prevBtn{panelInnerX + (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
+                                const SDL_Rect playBtn{panelInnerX + 2 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
+                                const SDL_Rect nextBtn{panelInnerX + 3 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
+                                const SDL_Rect lastBtn{panelInnerX + 4 * (buttonWidth + ButtonSpacing), buttonsY, buttonWidth, ButtonHeight};
+
+                                const int total = total_plies(historyState);
+
+                                if (hasGame && hit_test(firstBtn, clickX, clickY))
+                                {
+                                    historyState.autoplay = false;
+                                    rebuild_replay_position(historyState, 0);
+                                }
+                                else if (hasGame && hit_test(prevBtn, clickX, clickY))
+                                {
+                                    historyState.autoplay = false;
+                                    const int target = std::max(0, historyState.ply - 1);
+                                    rebuild_replay_position(historyState, target);
+                                }
+                                else if (hasGame && hit_test(playBtn, clickX, clickY))
+                                {
+                                    historyState.autoplay = !historyState.autoplay;
+                                    historyState.lastAutoTick = SDL_GetTicks();
+                                }
+                                else if (hasGame && hit_test(nextBtn, clickX, clickY))
+                                {
+                                    historyState.autoplay = false;
+                                    const int target = std::min(total, historyState.ply + 1);
+                                    rebuild_replay_position(historyState, target);
+                                }
+                                else if (hasGame && hit_test(lastBtn, clickX, clickY))
+                                {
+                                    historyState.autoplay = false;
+                                    rebuild_replay_position(historyState, total);
+                                }
                             }
                         }
                     }
@@ -879,6 +1181,13 @@ namespace ui
                         historyState.autoplay = false;
                     }
                 }
+            }
+
+            if (!historyState.statusText.empty() &&
+                SDL_GetTicks() > historyState.statusExpireMs)
+            {
+                historyState.statusText.clear();
+                historyState.statusExpireMs = 0;
             }
 
             const Board& boardToRender =
@@ -999,10 +1308,147 @@ namespace ui
                     offsetY += ListRowHeight;
                 }
 
+                fill_rect(renderer, moveHeaderRect, PanelBg);
+                draw_text(renderer, moveHeaderRect.x + 4, moveHeaderRect.y + (ButtonHeight - 7 * TextScale) / 2, TextScale, "MOVES", TextColor);
+                const SDL_Rect toggleRect{moveHeaderRect.x + moveHeaderRect.w - ButtonHeight,
+                                          moveHeaderRect.y,
+                                          ButtonHeight,
+                                          ButtonHeight};
+                draw_button(
+                    renderer,
+                    toggleRect,
+                    historyState.showSan ? "SAN" : "UCI",
+                    hit_test(toggleRect, mouseX, mouseY),
+                    hit_test(toggleRect, mouseX, mouseY) && mouseDown,
+                    historyState.loadedValid);
+
+                SDL_Rect moveListBg = moveListRect;
+                fill_rect(renderer, moveListBg, PanelBg);
+                SDL_SetRenderDrawColor(renderer, 25, 25, 30, 255);
+                SDL_RenderDrawRect(renderer, &moveListBg);
+
+                const int totalMoves = total_plies(historyState);
+                const int totalRows = (totalMoves + 1) / 2;
+                int moveStartIndex = 0;
+                int moveOffsetY = moveListRect.y - (historyState.moveListScroll % ListRowHeight);
+                if (historyState.moveListScroll > 0)
+                {
+                    moveStartIndex = historyState.moveListScroll / ListRowHeight;
+                }
+
+                const int activeRow = (historyState.ply == 0) ? -1 : (historyState.ply - 1) / 2;
+                for (int idx = moveStartIndex;
+                     idx < totalRows && moveOffsetY < moveListRect.y + moveListRect.h;
+                     ++idx)
+                {
+                    SDL_Rect rowRect{moveListRect.x, moveOffsetY, moveListRect.w, ListRowHeight};
+                    bool hovered = hit_test(rowRect, mouseX, mouseY);
+                    bool selectedRow = idx == activeRow;
+                    SDL_Color rowColor = (idx % 2 == 0) ? PanelBg : ListRowAlt;
+                    if (selectedRow)
+                    {
+                        rowColor = ListRowSel;
+                    }
+                    else if (hovered)
+                    {
+                        rowColor = ButtonHover;
+                    }
+                    fill_rect(renderer, rowRect, rowColor);
+
+                    const int whiteIndex = idx * 2;
+                    const int blackIndex = whiteIndex + 1;
+                    const bool hasWhite = whiteIndex < totalMoves;
+                    const bool hasBlack = blackIndex < totalMoves;
+
+                    const std::string moveNumber = std::to_string(idx + 1) + ".";
+                    const int textY = rowRect.y + (ListRowHeight - 7 * TextScale) / 2;
+                    int cursorX = rowRect.x + 8;
+                    draw_text(renderer, cursorX, textY, TextScale, moveNumber, TextColor);
+                    cursorX += measure_text_width(moveNumber, TextScale) + TextScale * 2;
+
+                    auto moveTextAt = [&](int moveIdx) -> std::string
+                    {
+                        if (historyState.showSan && moveIdx < static_cast<int>(historyState.sanMoves.size()))
+                        {
+                            return historyState.sanMoves[static_cast<std::size_t>(moveIdx)];
+                        }
+                        if (moveIdx < static_cast<int>(historyState.loaded.moves.size()))
+                        {
+                            return historyState.loaded.moves[static_cast<std::size_t>(moveIdx)];
+                        }
+                        return {};
+                    };
+
+                    if (hasWhite)
+                    {
+                        const bool active = historyState.ply == whiteIndex + 1;
+                        draw_text(renderer, cursorX, textY, TextScale, moveTextAt(whiteIndex), active ? ButtonPressed : TextColor);
+                        cursorX += measure_text_width(moveTextAt(whiteIndex), TextScale) + TextScale * 2;
+                    }
+
+                    if (hasBlack)
+                    {
+                        const bool active = historyState.ply == blackIndex + 1;
+                        draw_text(renderer, cursorX, textY, TextScale, moveTextAt(blackIndex), active ? ButtonPressed : TextColor);
+                    }
+
+                    moveOffsetY += ListRowHeight;
+                }
+
+                const int exportWidth = (panelInnerW - ButtonSpacing * 2) / 3;
+                const SDL_Rect exportPgnBtn{
+                    panelInnerX,
+                    exportButtonsY,
+                    exportWidth,
+                    ButtonHeight};
+                const SDL_Rect copyPgnBtn{
+                    panelInnerX + exportWidth + ButtonSpacing,
+                    exportButtonsY,
+                    exportWidth,
+                    ButtonHeight};
+                const SDL_Rect copyFenBtn{
+                    panelInnerX + 2 * (exportWidth + ButtonSpacing),
+                    exportButtonsY,
+                    exportWidth,
+                    ButtonHeight};
+
+                draw_button(
+                    renderer,
+                    exportPgnBtn,
+                    "EXPORT PGN",
+                    hit_test(exportPgnBtn, mouseX, mouseY),
+                    hit_test(exportPgnBtn, mouseX, mouseY) && mouseDown,
+                    historyState.loadedValid);
+                draw_button(
+                    renderer,
+                    copyPgnBtn,
+                    "COPY PGN",
+                    hit_test(copyPgnBtn, mouseX, mouseY),
+                    hit_test(copyPgnBtn, mouseX, mouseY) && mouseDown,
+                    historyState.loadedValid);
+                draw_button(
+                    renderer,
+                    copyFenBtn,
+                    "COPY FEN",
+                    hit_test(copyFenBtn, mouseX, mouseY),
+                    hit_test(copyFenBtn, mouseX, mouseY) && mouseDown,
+                    historyState.loadedValid);
+
                 const int controlAreaY = WindowHeight - HistoryControlsHeight + PanelPadding;
                 const int controlAreaH = HistoryControlsHeight - 2 * PanelPadding;
                 SDL_Rect controlRect{panelInnerX, controlAreaY, panelInnerW, controlAreaH};
                 fill_rect(renderer, controlRect, PanelBg);
+
+                if (!historyState.statusText.empty())
+                {
+                    draw_text(
+                        renderer,
+                        controlRect.x + 6,
+                        controlAreaY,
+                        TextScale,
+                        historyState.statusText,
+                        TextColor);
+                }
 
                 const int plyTextWidth =
                     historyState.loadedValid
@@ -1011,7 +1457,7 @@ namespace ui
                                   std::to_string(total_plies(historyState)),
                               TextScale)
                         : measure_text_width("NO GAMES", TextScale);
-                const int plyTextX = controlRect.x + (controlRect.w - plyTextWidth) / 2;
+                const int plyTextX = controlRect.x + controlRect.w - plyTextWidth - 6;
                 const int plyTextY = controlAreaY;
 
                 if (historyState.loadedValid)
