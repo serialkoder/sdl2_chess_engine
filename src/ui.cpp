@@ -58,6 +58,27 @@ namespace ui
         const SDL_Color ArrowRed{210, 50, 50, 180};
         const SDL_Color ArrowBlue{60, 140, 230, 180};
 
+        enum PieceTypeIdx
+        {
+            TypePawn = 0,
+            TypeKnight = 1,
+            TypeBishop = 2,
+            TypeRook = 3,
+            TypeQueen = 4,
+            TypeCount = 5
+        };
+
+        struct CapturesState
+        {
+            std::array<int, TypeCount> byWhite{};
+            std::array<int, TypeCount> byBlack{};
+        };
+
+        void rebuild_captures_cache(const std::string& startFen,
+                                    const std::vector<std::string>& moves,
+                                    std::vector<CapturesState>& capturesAtPly,
+                                    std::vector<int>& materialAtPly);
+
         enum class UIMode
         {
             Play,
@@ -69,6 +90,8 @@ namespace ui
             std::string startFen{StartingFen};
             std::vector<std::string> movesUci;
             std::vector<std::string> sanMoves;
+            std::vector<CapturesState> capturesAtPly;
+            std::vector<int> materialDiffAtPly;
             bool gameOver{false};
             int engineDepth{DefaultEngineDepth};
             int engineTimeMs{DefaultEngineTimeMs};
@@ -91,6 +114,8 @@ namespace ui
             bool loadedValid{false};
             int ply{0};
             std::vector<std::string> sanMoves;
+            std::vector<CapturesState> capturesAtPly;
+            std::vector<int> materialDiffAtPly;
             bool showSan{true};
             bool autoplay{false};
             std::uint32_t lastAutoTick{0};
@@ -348,6 +373,20 @@ namespace ui
             return false;
         }
 
+        bool resolve_uci_move(Board& board, const std::string& uci, Move& outMove)
+        {
+            const std::vector<Move> moves = board.generate_legal_moves();
+            for (const Move& move : moves)
+            {
+                if (move.to_uci() == uci)
+                {
+                    outMove = move;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         GameEndInfo detect_game_end(Board& board)
         {
             GameEndInfo info;
@@ -522,6 +561,11 @@ namespace ui
                 }
             }
 
+            rebuild_captures_cache(
+                historyState.loaded.startFen,
+                historyState.loaded.moves,
+                historyState.capturesAtPly,
+                historyState.materialDiffAtPly);
             rebuild_replay_position(historyState, 0);
         }
 
@@ -542,6 +586,8 @@ namespace ui
                 historyState.loadedValid = false;
                 historyState.loaded = GameRecord{};
                 historyState.replayBoard.load_fen(StartingFen);
+                historyState.capturesAtPly.clear();
+                historyState.materialDiffAtPly.clear();
             }
         }
 
@@ -713,6 +759,113 @@ namespace ui
             return pgn;
         }
 
+        int material_value(Piece piece)
+        {
+            switch (piece)
+            {
+            case Piece::WhitePawn:
+            case Piece::BlackPawn: return 1;
+            case Piece::WhiteKnight:
+            case Piece::BlackKnight: return 3;
+            case Piece::WhiteBishop:
+            case Piece::BlackBishop: return 3;
+            case Piece::WhiteRook:
+            case Piece::BlackRook: return 5;
+            case Piece::WhiteQueen:
+            case Piece::BlackQueen: return 9;
+            default:
+                return 0;
+            }
+        }
+
+        int piece_type_idx(Piece piece)
+        {
+            switch (piece)
+            {
+            case Piece::WhitePawn:
+            case Piece::BlackPawn: return TypePawn;
+            case Piece::WhiteKnight:
+            case Piece::BlackKnight: return TypeKnight;
+            case Piece::WhiteBishop:
+            case Piece::BlackBishop: return TypeBishop;
+            case Piece::WhiteRook:
+            case Piece::BlackRook: return TypeRook;
+            case Piece::WhiteQueen:
+            case Piece::BlackQueen: return TypeQueen;
+            default:
+                return -1;
+            }
+        }
+
+        int compute_material_diff(const Board& board)
+        {
+            int white = 0;
+            int black = 0;
+            for (int sq = 0; sq < 64; ++sq)
+            {
+                const Piece p = board.piece_at(sq);
+                if (p == Piece::None || p == Piece::WhiteKing || p == Piece::BlackKing)
+                {
+                    continue;
+                }
+                const int val = material_value(p);
+                if (is_white_piece(p))
+                {
+                    white += val;
+                }
+                else if (is_black_piece(p))
+                {
+                    black += val;
+                }
+            }
+            return white - black;
+        }
+
+        void rebuild_captures_cache(const std::string& startFen,
+                                    const std::vector<std::string>& moves,
+                                    std::vector<CapturesState>& capturesAtPly,
+                                    std::vector<int>& materialAtPly)
+        {
+            capturesAtPly.clear();
+            materialAtPly.clear();
+
+            Board tmp;
+            tmp.load_fen(startFen.empty() ? StartingFen : startFen);
+
+            CapturesState captures{};
+            capturesAtPly.push_back(captures);
+            materialAtPly.push_back(compute_material_diff(tmp));
+
+            for (std::size_t i = 0; i < moves.size(); ++i)
+            {
+                Move resolved{};
+                if (!resolve_uci_move(tmp, moves[i], resolved))
+                {
+                    break;
+                }
+
+                if (resolved.capturedPiece != Piece::None)
+                {
+                    const int idx = piece_type_idx(resolved.capturedPiece);
+                    if (idx >= 0 && idx < TypeCount)
+                    {
+                        if (is_white_piece(resolved.movingPiece))
+                        {
+                            ++captures.byWhite[static_cast<std::size_t>(idx)];
+                        }
+                        else
+                        {
+                            ++captures.byBlack[static_cast<std::size_t>(idx)];
+                        }
+                    }
+                }
+
+                tmp.make_move(resolved);
+                capturesAtPly.push_back(captures);
+                materialAtPly.push_back(compute_material_diff(tmp));
+            }
+        }
+
         SDL_Color color_from_mod(SDL_Keymod mods)
         {
             if (mods & KMOD_CTRL)
@@ -728,6 +881,20 @@ namespace ui
                 return ArrowBlue;
             }
             return ArrowGreen;
+        }
+
+        Piece piece_for_type(bool black, int typeIdx)
+        {
+            switch (typeIdx)
+            {
+            case TypeQueen: return black ? Piece::BlackQueen : Piece::WhiteQueen;
+            case TypeRook: return black ? Piece::BlackRook : Piece::WhiteRook;
+            case TypeBishop: return black ? Piece::BlackBishop : Piece::WhiteBishop;
+            case TypeKnight: return black ? Piece::BlackKnight : Piece::WhiteKnight;
+            case TypePawn: return black ? Piece::BlackPawn : Piece::WhitePawn;
+            default:
+                return Piece::None;
+            }
         }
 
         bool same_color(const SDL_Color& a, const SDL_Color& b)
@@ -952,6 +1119,42 @@ namespace ui
             }
         }
 
+        void draw_captured_row(SDL_Renderer* renderer,
+                               int x,
+                               int y,
+                               int width,
+                               const std::array<int, TypeCount>& counts,
+                               bool renderBlack,
+                               const std::unordered_map<Piece, SDL_Texture*>& textures,
+                               int iconSize)
+        {
+            const int order[TypeCount] = {TypeQueen, TypeRook, TypeBishop, TypeKnight, TypePawn};
+            int cursorX = x;
+            int cursorY = y;
+
+            for (int tIdx : order)
+            {
+                const int count = counts[static_cast<std::size_t>(tIdx)];
+                for (int i = 0; i < count; ++i)
+                {
+                    if (cursorX + iconSize > x + width)
+                    {
+                        cursorX = x;
+                        cursorY += iconSize + 2;
+                    }
+
+                    const Piece piece = piece_for_type(renderBlack, tIdx);
+                    auto it = textures.find(piece);
+                    if (it != textures.end())
+                    {
+                        SDL_Rect dst{cursorX, cursorY, iconSize, iconSize};
+                        SDL_RenderCopy(renderer, it->second, nullptr, &dst);
+                    }
+                    cursorX += iconSize + 2;
+                }
+            }
+        }
+
         void rebuild_play_view(Board& viewBoard,
                                const GameState& gameState,
                                PlayViewState& playState,
@@ -1010,6 +1213,16 @@ namespace ui
                     apply_uci_move(tmp, uci);
                 }
             }
+        }
+
+        void rebuild_play_caches(GameState& gameState)
+        {
+            recompute_play_san(gameState);
+            rebuild_captures_cache(
+                gameState.startFen,
+                gameState.movesUci,
+                gameState.capturesAtPly,
+                gameState.materialDiffAtPly);
         }
 
         void draw_panel_background(SDL_Renderer* renderer)
@@ -1139,7 +1352,7 @@ namespace ui
         Annotations historyAnnotations;
         PlayViewState playViewState;
         playViewState.viewBoard.load_fen(gameState.startFen);
-        recompute_play_san(gameState);
+        rebuild_play_caches(gameState);
         rebuild_play_view(
             playViewState.viewBoard,
             gameState,
@@ -1166,19 +1379,25 @@ namespace ui
             const int listStartY = PanelPadding + topButtons * (ButtonHeight + ButtonSpacing);
 
             const int exportButtonsHeight = ButtonHeight;
+            const int captureHeight = 70;
             const int totalRem = WindowHeight - listStartY -
                                  ButtonSpacing - ButtonHeight - ButtonSpacing -
                                  exportButtonsHeight - ButtonSpacing - HistoryControlsHeight;
             int gameListHeight = totalRem / 2;
-            int moveListHeight = totalRem - gameListHeight;
             if (mode == UIMode::Play)
             {
                 gameListHeight = 0;
-                moveListHeight = totalRem;
+            }
+            const int captureY = listStartY + gameListHeight + (gameListHeight > 0 ? ButtonSpacing : 0);
+            const int moveHeaderY = captureY + captureHeight + ButtonSpacing;
+            int moveListHeight = totalRem - gameListHeight - (gameListHeight > 0 ? ButtonSpacing : 0) -
+                                 captureHeight - ButtonSpacing - ButtonHeight;
+            if (moveListHeight < 0)
+            {
+                moveListHeight = 0;
             }
 
             const SDL_Rect historyListRect{panelInnerX, listStartY, panelInnerW, gameListHeight};
-            const int moveHeaderY = listStartY + gameListHeight + ButtonSpacing;
             const SDL_Rect moveHeaderRect{panelInnerX, moveHeaderY, panelInnerW, ButtonHeight};
             const SDL_Rect moveListRect{
                 panelInnerX,
@@ -1261,7 +1480,7 @@ namespace ui
                     else if (key == SDLK_n && mode == UIMode::Play)
                     {
                         reset_game(board, gameState, selectedSquare, legalMovesForSelected);
-                        recompute_play_san(gameState);
+                        rebuild_play_caches(gameState);
                         rebuild_play_view(playViewState.viewBoard, gameState, playViewState, 0);
                     }
                 }
@@ -1323,7 +1542,7 @@ namespace ui
                         else if (hit_test(newBtn, clickX, clickY))
                         {
                             reset_game(board, gameState, selectedSquare, legalMovesForSelected);
-                            recompute_play_san(gameState);
+                            rebuild_play_caches(gameState);
                             playViewState.viewPly = 0;
                             playViewState.moveListScroll = 0;
                             playViewState.statusText.clear();
@@ -1490,7 +1709,7 @@ namespace ui
                                         {
                                             board.make_move(chosenMove);
                                             gameState.movesUci.push_back(chosenMove.to_uci());
-                                            recompute_play_san(gameState);
+                                            rebuild_play_caches(gameState);
                                             rebuild_play_view(
                                                 playViewState.viewBoard,
                                                 gameState,
@@ -1520,7 +1739,7 @@ namespace ui
                                                       engineMove.movingPiece == Piece{}))
                                                 {
                                                     gameState.movesUci.push_back(engineMove.to_uci());
-                                                    recompute_play_san(gameState);
+                                                    rebuild_play_caches(gameState);
                                                     rebuild_play_view(
                                                         playViewState.viewBoard,
                                                         gameState,
@@ -1884,6 +2103,79 @@ namespace ui
             }
 
             draw_panel_background(renderer);
+
+            CapturesState captures{};
+            int materialDiff = 0;
+            if (mode == UIMode::Play)
+            {
+                if (!gameState.capturesAtPly.empty() && !gameState.materialDiffAtPly.empty())
+                {
+                    const std::size_t idx =
+                        std::min<std::size_t>(playViewState.viewPly, gameState.capturesAtPly.size() - 1);
+                    captures = gameState.capturesAtPly[idx];
+                    materialDiff = gameState.materialDiffAtPly[std::min<std::size_t>(
+                        idx, gameState.materialDiffAtPly.size() - 1)];
+                }
+            }
+            else
+            {
+                if (!historyState.capturesAtPly.empty() && !historyState.materialDiffAtPly.empty())
+                {
+                    const std::size_t idx =
+                        std::min<std::size_t>(historyState.ply, historyState.capturesAtPly.size() - 1);
+                    captures = historyState.capturesAtPly[idx];
+                    materialDiff = historyState.materialDiffAtPly[std::min<std::size_t>(
+                        idx, historyState.materialDiffAtPly.size() - 1)];
+                }
+            }
+
+            const int iconSize = 24;
+            SDL_Rect captureRect{panelInnerX, captureY, panelInnerW, captureHeight};
+            fill_rect(renderer, captureRect, PanelBg);
+            SDL_SetRenderDrawColor(renderer, 25, 25, 30, 255);
+            SDL_RenderDrawRect(renderer, &captureRect);
+
+            const int rowWhiteY = captureY + 4;
+            const int rowBlackY = rowWhiteY + iconSize + 6;
+
+            draw_captured_row(
+                renderer,
+                captureRect.x + 4,
+                rowWhiteY,
+                captureRect.w - 40,
+                captures.byWhite,
+                true,
+                pieceTextures,
+                iconSize);
+
+            draw_captured_row(
+                renderer,
+                captureRect.x + 4,
+                rowBlackY,
+                captureRect.w - 40,
+                captures.byBlack,
+                false,
+                pieceTextures,
+                iconSize);
+
+            if (materialDiff > 0)
+            {
+                draw_text(renderer,
+                          captureRect.x + captureRect.w - 30,
+                          rowWhiteY,
+                          TextScale,
+                          "+" + std::to_string(materialDiff),
+                          TextColor);
+            }
+            else if (materialDiff < 0)
+            {
+                draw_text(renderer,
+                          captureRect.x + captureRect.w - 30,
+                          rowBlackY,
+                          TextScale,
+                          "+" + std::to_string(-materialDiff),
+                          TextColor);
+            }
 
             if (mode == UIMode::Play)
             {
