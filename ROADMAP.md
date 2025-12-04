@@ -32,6 +32,10 @@ This document captures planned improvements and next steps for the C++17 chess e
 
 - **Input / usability** — Pending: last-move highlight, optional legal-move hints, engine settings via shortcuts/menu.
 
+## 6. Recent Additions
+
+- History browser with in-app move list, replay controls, PGN/FEN export, and per-mode annotations (arrows/circles with auto-clear + pin toggle).
+
 ## 5. Testing & Tooling
 
 - **Perft and regression** — Pending: expand standard perft positions (e.g. Kiwipete) to validate movegen after changes.

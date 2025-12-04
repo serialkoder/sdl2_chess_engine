@@ -131,6 +131,11 @@ namespace ui
             SDL_Color dragColor{};
         };
 
+        struct AnnotationSettings
+        {
+            bool autoClear{true};
+        };
+
         struct Glyph
         {
             int width{5};
@@ -779,6 +784,20 @@ namespace ui
             annotations.dragToSquare = -1;
         }
 
+        void clear_annotations_for_mode(UIMode mode,
+                                        Annotations& playAnnotations,
+                                        Annotations& historyAnnotations)
+        {
+            if (mode == UIMode::Play)
+            {
+                clear_annotations(playAnnotations);
+            }
+            else
+            {
+                clear_annotations(historyAnnotations);
+            }
+        }
+
         SDL_FPoint square_center(int square)
         {
             SDL_Rect rect = square_rect(square);
@@ -1133,6 +1152,7 @@ namespace ui
         int mouseX = 0;
         int mouseY = 0;
         bool mouseDown = false;
+        AnnotationSettings annotationSettings;
 
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
@@ -1247,6 +1267,12 @@ namespace ui
                 }
                 else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT)
                 {
+                    Annotations& ann = (mode == UIMode::Play) ? playAnnotations : historyAnnotations;
+                    if (annotationSettings.autoClear && !ann.dragging)
+                    {
+                        clear_annotations_for_mode(mode, playAnnotations, historyAnnotations);
+                    }
+
                     mouseDown = true;
                     const int clickX = event.button.x;
                     const int clickY = event.button.y;
@@ -1262,10 +1288,15 @@ namespace ui
                             PanelPadding + ButtonHeight + ButtonSpacing,
                             panelInnerW,
                             ButtonHeight};
-                        const SDL_Rect clearBtn{
+                        const SDL_Rect pinBtn{
                             panelInnerX,
                             PanelPadding + 2 * (ButtonHeight + ButtonSpacing),
-                            panelInnerW,
+                            (panelInnerW - ButtonSpacing) / 2,
+                            ButtonHeight};
+                        const SDL_Rect clearBtn{
+                            pinBtn.x + pinBtn.w + ButtonSpacing,
+                            PanelPadding + 2 * (ButtonHeight + ButtonSpacing),
+                            (panelInnerW - ButtonSpacing) / 2,
                             ButtonHeight};
 
                         const int controlAreaY = WindowHeight - HistoryControlsHeight + PanelPadding;
@@ -1298,6 +1329,10 @@ namespace ui
                             playViewState.statusText.clear();
                             playViewState.statusExpireMs = 0;
                             rebuild_play_view(playViewState.viewBoard, gameState, playViewState, 0);
+                        }
+                        else if (hit_test(pinBtn, clickX, clickY))
+                        {
+                            annotationSettings.autoClear = !annotationSettings.autoClear;
                         }
                         else if (hit_test(clearBtn, clickX, clickY))
                         {
@@ -1528,16 +1563,25 @@ namespace ui
                     else
                     {
                         const SDL_Rect backBtn{panelInnerX, PanelPadding, panelInnerW, ButtonHeight};
-                        const SDL_Rect clearBtn{
+                        const SDL_Rect pinBtn{
                             panelInnerX,
                             PanelPadding + ButtonHeight + ButtonSpacing,
-                            panelInnerW,
+                            (panelInnerW - ButtonSpacing) / 2,
+                            ButtonHeight};
+                        const SDL_Rect clearBtn{
+                            pinBtn.x + pinBtn.w + ButtonSpacing,
+                            PanelPadding + ButtonHeight + ButtonSpacing,
+                            (panelInnerW - ButtonSpacing) / 2,
                             ButtonHeight};
 
                         if (hit_test(backBtn, clickX, clickY))
                         {
                             mode = UIMode::Play;
                             historyState.autoplay = false;
+                        }
+                        else if (hit_test(pinBtn, clickX, clickY))
+                        {
+                            annotationSettings.autoClear = !annotationSettings.autoClear;
                         }
                         else if (hit_test(clearBtn, clickX, clickY))
                         {
@@ -1849,10 +1893,15 @@ namespace ui
                     PanelPadding + ButtonHeight + ButtonSpacing,
                     panelInnerW,
                     ButtonHeight};
-                const SDL_Rect clearBtn{
+                const SDL_Rect pinBtn{
                     panelInnerX,
                     PanelPadding + 2 * (ButtonHeight + ButtonSpacing),
-                    panelInnerW,
+                    (panelInnerW - ButtonSpacing) / 2,
+                    ButtonHeight};
+                const SDL_Rect clearBtn{
+                    pinBtn.x + pinBtn.w + ButtonSpacing,
+                    PanelPadding + 2 * (ButtonHeight + ButtonSpacing),
+                    (panelInnerW - ButtonSpacing) / 2,
                     ButtonHeight};
                 const int controlAreaY = WindowHeight - HistoryControlsHeight + PanelPadding;
                 const int buttonsY = controlAreaY + 7 * TextScale + 10;
@@ -1878,6 +1927,13 @@ namespace ui
                     "NEW",
                     hit_test(newBtn, mouseX, mouseY),
                     hit_test(newBtn, mouseX, mouseY) && mouseDown,
+                    true);
+                draw_button(
+                    renderer,
+                    pinBtn,
+                    annotationSettings.autoClear ? "AUTOCLR" : "PIN",
+                    hit_test(pinBtn, mouseX, mouseY),
+                    hit_test(pinBtn, mouseX, mouseY) && mouseDown,
                     true);
                 draw_button(
                     renderer,
@@ -2030,10 +2086,15 @@ namespace ui
             else
             {
                 const SDL_Rect backBtn{panelInnerX, PanelPadding, panelInnerW, ButtonHeight};
-                const SDL_Rect clearBtn{
+                const SDL_Rect pinBtn{
                     panelInnerX,
                     PanelPadding + ButtonHeight + ButtonSpacing,
-                    panelInnerW,
+                    (panelInnerW - ButtonSpacing) / 2,
+                    ButtonHeight};
+                const SDL_Rect clearBtn{
+                    pinBtn.x + pinBtn.w + ButtonSpacing,
+                    PanelPadding + ButtonHeight + ButtonSpacing,
+                    (panelInnerW - ButtonSpacing) / 2,
                     ButtonHeight};
                 draw_button(
                     renderer,
@@ -2041,6 +2102,13 @@ namespace ui
                     "BACK",
                     hit_test(backBtn, mouseX, mouseY),
                     hit_test(backBtn, mouseX, mouseY) && mouseDown,
+                    true);
+                draw_button(
+                    renderer,
+                    pinBtn,
+                    annotationSettings.autoClear ? "AUTOCLR" : "PIN",
+                    hit_test(pinBtn, mouseX, mouseY),
+                    hit_test(pinBtn, mouseX, mouseY) && mouseDown,
                     true);
                 draw_button(
                     renderer,
