@@ -215,6 +215,11 @@ namespace ui
             case 'X': return {5, {0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001}};
             case 'Y': return {5, {0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100}};
             case 'W': return {5, {0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010}};
+            case 'G': return {5, {0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111}};
+            case 'J': return {5, {0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100}};
+            case 'M': return {5, {0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001}};
+            case 'Q': return {5, {0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101}};
+            case 'Z': return {5, {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111}};
             case 'a': return {5, {0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b10001, 0b01111}};
             case 'b': return {5, {0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b11110}};
             case 'c': return {5, {0b00000, 0b01110, 0b10001, 0b10000, 0b10000, 0b10001, 0b01110}};
@@ -286,14 +291,21 @@ namespace ui
             SDL_Color useColor = color;
             useColor.a = 255;
             int cursorX = x;
+            static std::array<bool, 256> missingLogged{};
+
             for (char ch : text)
             {
+                const unsigned char idx = static_cast<unsigned char>(ch);
                 Glyph glyph = glyph_for_char(ch);
                 const bool emptyGlyph =
                     std::all_of(glyph.rows.begin(), glyph.rows.end(), [](std::uint8_t v) { return v == 0; });
                 if (emptyGlyph && ch != ' ')
                 {
                     glyph = glyph_for_char('?');
+                    if (!missingLogged[idx])
+                    {
+                        missingLogged[idx] = true;
+                    }
                 }
 
                 draw_glyph(renderer, cursorX, y, scale, glyph, useColor);
